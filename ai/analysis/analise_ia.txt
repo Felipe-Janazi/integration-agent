@@ -1,137 +1,76 @@
-## 1. Testes que falharam  
-O log indica **um único teste** que falhou:
+## 1. Qual teste falhou  
 
-| # | Nome do teste (descrição) |
-|---|---------------------------|
-| 1 | **Usuário deve atualizar telefone com campo vazio** |
+Apenas **um** teste foi registrado no log:
 
-> *A mensagem de erro aparece apenas quando o usuário tenta atualizar o telefone sem preencher o campo.*
+```
+Usuário deve atualizar telefone com campo vazio falhou
+```
+
+Isso indica que o teste que verifica se a aplicação exibe a mensagem de erro “Phone is required.” quando o campo de telefone é enviado vazio não passou.
 
 ---
 
-## 2. Motivo de cada falha  
-A falha é causada por uma **asserção** que não consegue encontrar o elemento de erro esperado:
+## 2. Motivo da falha  
+
+### 2.1 Mensagem não encontrada
+O erro aponta para a ausência do elemento que contém o texto esperado:
 
 ```
-Error: expect(locator).toContainText(expected) failed
 Locator: locator('//*[@id="phone-error"]')
 Expected string: "Phone is required."
 Received: <element(s) not found>
-Timeout: 5000ms
 ```
 
-### O que aconteceu
+- **Seleção incorreta** – O XPath `//*[@id="phone-error"]` não corresponde a nenhum elemento na página no momento da verificação.  
+- **Validação não disparada** – Pode ser que o formulário não tenha sido submetido corretamente (o campo pode ainda conter um valor, ou o botão de submit não foi clicado).  
+- **Tempo insuficiente** – O Playwright esperou 5 s e não encontrou o elemento; talvez a mensagem apareça após um pouco mais de tempo ou dependa de uma animação.  
+- **Erro de idioma/idiomática** – Se a aplicação estiver localizada em outro idioma, o texto “Phone is required.” pode não existir exatamente com essa grafia.  
 
-| Passo | O que o teste faz | O que deveria acontecer | Observação no log |
-|-------|------------------|------------------------|-------------------|
-| 1 | Preenche a tela de atualização de telefone e deixa o campo vazio | Quando o usuário submete o formulário, o JavaScript de validação deve exibir um *error message* com id `phone-error` que contém o texto “Phone is required.” |  |
-| 2 | O teste espera que o elemento exista e contenha o texto | O Playwright não encontrou nenhum elemento com o selector `//*[@id="phone-error"]` dentro de 5 s | `Received: <element(s) not found>` |
-| 3 | A asserção falha | O teste aborta e mostra a mensagem de falha | `expect(locator).toContainText(expected)` |
-
-#### Possíveis causas
-
-1. **O elemento não é criado** – O código de validação não está gerando o `<div id="phone-error">` (poderia estar em outra tag, ou ser exibido apenas após uma ação específica).
-2. **O selector está incorreto** – O ID real pode ser outro, ou o elemento pode estar dentro de um iframe/Shadow DOM que o Playwright não está acessando.
-3. **O tempo de renderização é maior que 5 s** – A mensagem pode aparecer depois de uma requisição ou animação que ultrapassa o timeout padrão.
-4. **A ação de submissão não foi disparada** – O teste pode estar faltando o clique no botão “Salvar” ou a chamada de `form.submit()`.
-5. **Condições de ambiente** – O teste pode estar rodando num ambiente de teste onde a validação não está habilitada (por exemplo, um mock que ignora regras de campo obrigatório).
+Em resumo: **o teste tentou encontrar um elemento que não existia (ou não estava visível) no DOM dentro do prazo estabelecido**.
 
 ---
 
-## 3. Sugestões de correção
+## 3. Sugestões de correção  
 
-### 3.1 Verifique a implementação da validação
-1. **Abra a aplicação** em modo de depuração (devtools).  
-   - Preencha a tela de atualização de telefone com o campo vazio e clique em **Salvar**.  
-   - Observe se algum elemento aparece com `id="phone-error"`.  
-   - Se não aparecer, o bug está no código de validação.  
-2. Se o elemento aparecer, **confirme** que ele contém exatamente o texto `Phone is required.` (sem espaços extras, maiúsculas/minúsculas).
+| Problema | Solução prática | Como implementar |
+|----------|----------------|-----------------|
+| **Seleção inválida** | Verifique o ID ou a estrutura real do elemento de erro. | Use `page.inspect()` ou abra a página no DevTools e procure o elemento que aparece após a submissão vazia.  Se o ID mudar (ex.: `phoneError`, `phone_error`, ou não existir), atualize o seletor. |
+| **Validação não disparada** | Garanta que o campo está **limpo** antes de submeter. | `await page.fill('#phone', '');`  ou `await page.press('#phone', 'Control+A'); await page.press('#phone', 'Backspace');` |
+| **Tempo de espera insuficiente** | Aumente o timeout ou use `waitForSelector` para esperar até que o elemento esteja visível. | `await expect(page.locator('#phone-error')).toContainText('Phone is required.', { timeout: 10000 });` |
+| **Elementos dinâmicos ou transição** | Use um seletor mais robusto (por exemplo, baseado em texto ou em classe comum). | `await expect(page.getByText('Phone is required.')).toBeVisible();`  ou `await expect(page.locator('.error-message')).toContainText('Phone is required.');` |
+| **Idioma diferente** | Mapeie a mensagem esperada de acordo com a configuração de local. | Se o app estiver em português, use `await expect(page.getByText('Telefone é obrigatório.')).toBeVisible();` |
+| **Debug adicional** | Capture screenshot, console logs e DOM snapshot. | `await page.screenshot({ path: 'debug.png' });`  `console.log(await page.content());` |
+| **Verificar fluxo de navegação** | Confirme se a página não está redirecionada ou se o modal/iframe ainda está aberto. | Use `await page.waitForLoadState('networkidle');` antes de submeter. |
 
-### 3.2 Corrija o seletor no teste
-- Se o id for diferente, atualize o test:
-
-  ```ts
-  await expect(page.locator('#phoneError')).toHaveText('Phone is required.');
-  ```
-
-- Se o elemento está dentro de um iframe, faça o `frame`:
-
-  ```ts
-  const frame = await page.frame({ name: 'form-frame' });
-  await expect(frame.locator('#phone-error')).toHaveText('Phone is required.');
-  ```
-
-- Se o elemento usa Shadow DOM, use:
-
-  ```ts
-  const shadow = await page.locator('#phone-error').evaluateHandle(el => el.shadowRoot);
-  await expect(shadow.locator('.error')).toHaveText('Phone is required.');
-  ```
-
-### 3.3 Garanta que a submissão é feita
-```ts
-await page.fill('#phone', '');          // deixa vazio
-await page.click('#save-button');       // dispara validação
-```
-Se a página usa um evento `onblur` para validar, pode ser necessário:
+### Exemplo de teste corrigido
 
 ```ts
-await page.click('#phone', { clickCount: 1 }); // força blur
-await page.waitForTimeout(100); // espera a validação
-```
+test('Usuário deve atualizar telefone com campo vazio', async ({ page }) => {
+  // 1. Navega para a tela de edição de telefone
+  await page.goto('/profile');
 
-### 3.4 Aumente o timeout ou use `waitForSelector`
-Se a mensagem leva mais de 5 s para aparecer (por exemplo, após uma chamada de API), aumente o timeout:
+  // 2. Limpa o campo de telefone
+  await page.fill('#phone', '');
 
-```ts
-await expect(page.locator('#phone-error')).toHaveText(
-  'Phone is required.',
-  { timeout: 10000 }  // 10 segundos
-);
-```
-Ou aguarde explicitamente:
+  // 3. Submete o formulário
+  await page.click('#submit-button');
 
-```ts
-await page.waitForSelector('#phone-error', { state: 'visible', timeout: 10000 });
-await expect(page.locator('#phone-error')).toHaveText('Phone is required.');
-```
+  // 4. Espera a mensagem de erro aparecer
+  await expect(
+    page.locator('#phone-error') // ajuste se o ID for diferente
+  ).toContainText('Phone is required.', { timeout: 10000 });
 
-### 3.5 Faça a verificação de visibilidade antes do texto
-Isso evita falsos negativos quando o elemento existe mas está oculto:
-
-```ts
-await expect(page.locator('#phone-error')).toBeVisible();
-await expect(page.locator('#phone-error')).toHaveText('Phone is required.');
-```
-
-### 3.6 Use `expect.soft` ou `test.step` para melhor diagnóstico
-```ts
-await test.step('Submeter formulário', async () => {
-  await page.click('#save-button');
+  // 5. (Opcional) Verifica que o erro é visível
+  await expect(page.locator('#phone-error')).toBeVisible();
 });
-await expect.soft(page.locator('#phone-error')).toBeVisible();
-await expect.soft(page.locator('#phone-error')).toHaveText('Phone is required.');
 ```
 
-### 3.7 Adicione logs visuais
-Para depurar, exiba o HTML do contêiner de erro:
+### Checklist rápido
 
-```ts
-console.log(await page.locator('#phone-error').innerHTML());
-```
+1. **Seletores corretos** – Use DevTools para confirmar que o elemento com `id="phone-error"` realmente existe.  
+2. **Estado do campo** – Use `await page.fill('#phone', '');` para garantir que está vazio.  
+3. **Submissão** – Confirme que o botão de submit está sendo clicado e não é desativado por validação de outro campo.  
+4. **Tempo de espera** – Se a mensagem aparecer após animações, aumente o timeout ou use `waitForSelector` com `state: 'visible'`.  
+5. **Idioma** – Se a aplicação estiver em outro idioma, mude o texto esperado ou use regex/substring.
 
-Isso ajudará a ver se o elemento existe, mas tem outro texto.
-
----
-
-## Resumo rápido de correções possíveis
-
-| Problema | Solução rápida |
-|----------|----------------|
-| Elemento não encontrado | Confirme que o ID está correto, ou use o seletor adequado (iframe/shadow). |
-| Texto diferente | Ajuste a string esperada para o texto real. |
-| Timeout curto | Aumente o timeout ou use `waitForSelector`. |
-| Ação de submit não disparada | Adicione `await page.click('#save-button')` antes de esperar o erro. |
-| Validação não habilitada | Verifique se a configuração de ambiente ativa a regra de “campo obrigatório”. |
-
-Com essas correções o teste deve passar ou, no mínimo, apontar exatamente onde a aplicação diverge do comportamento esperado.
+Ao aplicar essas correções, o teste deverá localizar corretamente a mensagem de erro e passar sem falhas. Boa sorte!
